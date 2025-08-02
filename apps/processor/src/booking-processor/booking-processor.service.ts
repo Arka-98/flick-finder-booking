@@ -11,6 +11,8 @@ import { Booking } from '@app/common/entities/booking.entity';
 import { BookingStatusEnum } from '@app/common/enums/booking-status.enum';
 import { KafkaService, TOPICS } from '@flick-finder/common';
 import { SeatReservation } from '@apps/booking/src/seat-reservation/entities/seat-reservation.entity';
+import { setTimeout } from 'timers/promises';
+import { ShowtimeSeatStatusEnum } from '@app/common/enums/showtime-seat-status.enum';
 
 @Processor(QueueEnum.BOOKING, { concurrency: 100 })
 export class BookingProcessorService extends WorkerHost {
@@ -28,26 +30,7 @@ export class BookingProcessorService extends WorkerHost {
       case BookingQueueJobNameEnum.BOOK: {
         const { bookingId, showtimeId, seatIds } = job.data;
 
-        await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-          key: bookingId,
-          value: {
-            bookingId,
-            eventType: BookingEventTypeEnum.BOOK_PENDING,
-            createdAt: new Date(),
-          },
-        });
         await this.reserveSeatsForShowtime(bookingId, showtimeId, seatIds);
-
-        // @todo process payment
-
-        await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-          key: bookingId,
-          value: {
-            bookingId,
-            eventType: BookingEventTypeEnum.BOOK_PENDING,
-            createdAt: new Date(),
-          },
-        });
 
         break;
       }
@@ -66,11 +49,13 @@ export class BookingProcessorService extends WorkerHost {
 
     try {
       const showtimeSeats = await queryRunner.manager
+        .getRepository(ShowtimeSeat)
         .createQueryBuilder()
-        .select('id')
-        .from(ShowtimeSeat, 'showtime_seats')
         .where('showtime_id = :showtimeId', { showtimeId })
         .andWhere('seat_id IN (:...seatIds)', { seatIds })
+        .andWhere('status = :status', {
+          status: ShowtimeSeatStatusEnum.AVAILABLE,
+        })
         .setLock('pessimistic_write')
         .setOnLocked('skip_locked')
         .getMany();
@@ -81,23 +66,55 @@ export class BookingProcessorService extends WorkerHost {
         );
       }
 
-      await queryRunner.manager.insert(
-        SeatReservation,
-        seatIds.map((seatId) => ({
-          booking: { id: bookingId },
-          seat: { id: seatId },
-        })),
+      await Promise.all(
+        showtimeSeats.map(({ id }) =>
+          queryRunner.manager.update(
+            ShowtimeSeat,
+            { id },
+            { status: ShowtimeSeatStatusEnum.PENDING },
+          ),
+        ),
       );
-      await queryRunner.manager.update(
-        Booking,
-        { id: bookingId },
-        { status: BookingStatusEnum.COMPLETED },
-      );
+
+      // @todo process payment
+
+      // simulate payment processing
+      await setTimeout(20000);
+
+      await Promise.all([
+        queryRunner.manager.insert(
+          SeatReservation,
+          seatIds.map((seatId) => ({
+            booking: { id: bookingId },
+            seat: { id: seatId },
+          })),
+        ),
+        queryRunner.manager.update(
+          Booking,
+          { id: bookingId },
+          { status: BookingStatusEnum.COMPLETED },
+        ),
+        ...showtimeSeats.map(({ id }) =>
+          queryRunner.manager.update(
+            ShowtimeSeat,
+            { id },
+            { status: ShowtimeSeatStatusEnum.BOOKED },
+          ),
+        ),
+      ]);
       await queryRunner.commitTransaction();
+      await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
+        key: bookingId,
+        value: {
+          bookingId,
+          eventType: BookingEventTypeEnum.BOOK_SUCCESS,
+          createdAt: new Date(),
+        },
+      });
     } catch (error) {
       await queryRunner.rollbackTransaction();
 
-      throw { ...error, bookingId };
+      throw error;
     } finally {
       await queryRunner.release();
     }

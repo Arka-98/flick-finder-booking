@@ -11,11 +11,17 @@ export class HallConsumerService {
   ) {}
 
   createHall(hall: HallEventDto) {
-    return this.hallRepository.insert(hall);
+    return this.hallRepository.insert({
+      ...hall,
+      theater: { id: hall.theater },
+    });
   }
 
   updateHall(hallId: string, hallUpdateBody: Omit<HallEventDto, '_id'>) {
-    return this.hallRepository.update({ id: hallId }, hallUpdateBody);
+    return this.hallRepository.update(
+      { id: hallId },
+      { ...hallUpdateBody, theater: { id: hallUpdateBody.theater } },
+    );
   }
 
   deleteHall(hallId: string) {

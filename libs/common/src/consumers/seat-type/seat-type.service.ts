@@ -12,7 +12,10 @@ export class SeatTypeConsumerService {
   ) {}
 
   createSeatType(seatType: SeatTypeEventDto) {
-    return this.seatTypeRepository.insert(seatType);
+    return this.seatTypeRepository.insert({
+      ...seatType,
+      theater: { id: seatType.theater },
+    });
   }
 
   updateSeatType(
@@ -21,7 +24,10 @@ export class SeatTypeConsumerService {
   ) {
     return this.seatTypeRepository.update(
       { id: seatTypeId },
-      seatTypeUpdateBody,
+      {
+        ...seatTypeUpdateBody,
+        theater: { id: seatTypeUpdateBody.theater },
+      },
     );
   }
 

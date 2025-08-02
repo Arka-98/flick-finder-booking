@@ -1,7 +1,7 @@
-import { type MigrationInterface, type QueryRunner } from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 import { BookingStatusEnum } from '../enums/booking-status.enum';
 
-export class CreateBookingStatusEnum1750582323591
+export class CreateBookingStatusEnum1749365606333
   implements MigrationInterface
 {
   public async up(queryRunner: QueryRunner): Promise<void> {

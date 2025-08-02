@@ -1,7 +1,6 @@
 import { IdDto } from '@app/common/dto/id.dto';
 import { ISeatTypeEvent } from '@flick-finder/common';
-import { Transform } from 'class-transformer';
-import { IsObject, IsString } from 'class-validator';
+import { IsMongoId, IsString } from 'class-validator';
 
 export class SeatTypeEventDto
   extends IdDto
@@ -10,7 +9,6 @@ export class SeatTypeEventDto
   @IsString()
   type: string;
 
-  @Transform(({ value }) => ({ id: value }))
-  @IsObject()
-  theater: { id: string };
+  @IsMongoId()
+  theater: string;
 }

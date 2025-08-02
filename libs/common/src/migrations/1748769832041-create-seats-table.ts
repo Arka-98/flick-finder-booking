@@ -1,4 +1,4 @@
-import { type MigrationInterface, type QueryRunner } from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class CreateSeatsTable1748769832041 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -6,7 +6,7 @@ export class CreateSeatsTable1748769832041 implements MigrationInterface {
       CREATE TABLE IF NOT EXISTS flick_finder.seats (
         id VARCHAR(24) PRIMARY KEY,
         hall_id VARCHAR(24) NOT NULL,
-        row_label VARCHAR(10) NOT NULL,
+        seat_label VARCHAR(10) NOT NULL,
         seat_type_id VARCHAR(24) NOT NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
