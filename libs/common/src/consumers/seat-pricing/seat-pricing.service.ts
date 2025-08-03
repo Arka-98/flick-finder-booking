@@ -12,16 +12,24 @@ export class SeatPricingConsumerService {
   ) {}
 
   createSeatPricing(seatPricing: SeatPricingEventDto) {
-    return this.seatPricingRepository.insert(seatPricing);
+    return this.seatPricingRepository.insert({
+      ...seatPricing,
+      seatType: { id: seatPricing.seatType },
+      showtime: { id: seatPricing.showtime },
+    });
   }
 
   updateSeatPricing(
     seatPricingId: string,
-    seatUpdateBody: Omit<SeatPricingEventDto, '_id'>,
+    seatPricingUpdateBody: Omit<SeatPricingEventDto, '_id'>,
   ) {
     return this.seatPricingRepository.update(
       { id: seatPricingId },
-      seatUpdateBody,
+      {
+        ...seatPricingUpdateBody,
+        seatType: { id: seatPricingUpdateBody.seatType },
+        showtime: { id: seatPricingUpdateBody.showtime },
+      },
     );
   }
 

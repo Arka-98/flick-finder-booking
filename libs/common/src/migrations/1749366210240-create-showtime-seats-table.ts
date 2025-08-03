@@ -1,4 +1,4 @@
-import { type MigrationInterface, type QueryRunner } from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class CreateShowtimeSeatsTable1749365606334
   implements MigrationInterface
@@ -13,8 +13,7 @@ export class CreateShowtimeSeatsTable1749365606334
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         CONSTRAINT showtime_seats_showtime_id_fk FOREIGN KEY (showtime_id) REFERENCES flick_finder.showtimes(id) ON DELETE CASCADE,
-        CONSTRAINT showtime_seats_seat_id_fk FOREIGN KEY (seat_id) REFERENCES flick_finder.seats(id) ON DELETE CASCADE,
-        CONSTRAINT showtime_seats_booking_id_fk FOREIGN KEY (booking_id) REFERENCES flick_finder.bookings(id) ON DELETE CASCADE
+        CONSTRAINT showtime_seats_seat_id_fk FOREIGN KEY (seat_id) REFERENCES flick_finder.seats(id) ON DELETE CASCADE
       );
     `);
   }

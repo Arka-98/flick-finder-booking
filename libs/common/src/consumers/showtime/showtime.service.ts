@@ -21,12 +21,16 @@ export class ShowtimeConsumerService {
     const createdShowtime = await this.showtimeRepository
       .createQueryBuilder()
       .insert()
-      .values(showtime)
+      .values({
+        ...showtime,
+        movie: { id: showtime.movie },
+        hall: { id: showtime.hall },
+      })
       .returning('*')
       .execute();
     const seats = await this.seatRepository.find({
       select: ['id'],
-      where: { hall: showtime.hall },
+      where: { hall: { id: showtime.hall } },
     });
 
     await this.showtimeSeatsRepository
@@ -34,7 +38,7 @@ export class ShowtimeConsumerService {
       .insert()
       .values(
         seats.map((seat) => ({
-          showtime: { id: createdShowtime.raw.id },
+          showtime: { id: createdShowtime.raw[0].id },
           seat: { id: seat.id },
         })),
       )
@@ -47,7 +51,11 @@ export class ShowtimeConsumerService {
   ) {
     return this.showtimeRepository.update(
       { id: showtimeId },
-      showtimeUpdateBody,
+      {
+        ...showtimeUpdateBody,
+        movie: { id: showtimeUpdateBody.movie },
+        hall: { id: showtimeUpdateBody.hall },
+      },
     );
   }
 

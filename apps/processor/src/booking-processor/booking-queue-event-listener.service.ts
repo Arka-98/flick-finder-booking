@@ -1,4 +1,7 @@
+import { BookingKafkaEventDto } from '@app/common/dto/booking-kafka-event.dto';
+import { Booking } from '@app/common/entities/booking.entity';
 import { BookingEventTypeEnum } from '@app/common/enums/booking-event-type.enum';
+import { BookingStatusEnum } from '@app/common/enums/booking-status.enum';
 import { QueueEnum } from '@app/common/enums/queue.enum';
 import { KafkaService, TOPICS } from '@flick-finder/common';
 import {
@@ -7,6 +10,8 @@ import {
   QueueEventsListener,
 } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 @QueueEventsListener(QueueEnum.BOOKING)
 export class BookingQueueEventListenerService extends QueueEventsHost {
@@ -14,21 +19,43 @@ export class BookingQueueEventListenerService extends QueueEventsHost {
     BookingQueueEventListenerService.name,
   );
 
-  constructor(private readonly kafkaService: KafkaService) {
+  constructor(
+    private readonly kafkaService: KafkaService,
+    @InjectRepository(Booking)
+    private readonly bookingRepository: Repository<Booking>,
+  ) {
     super();
   }
 
-  @OnQueueEvent('error')
-  async onQueueError(error: Error & { bookingId: string }) {
-    this.loggerService.error(error.message || error);
+  @OnQueueEvent('failed')
+  async onQueueError(error: {
+    failedReason: string;
+    jobId: string;
+    prev?: string;
+  }) {
+    this.loggerService.error(error.failedReason);
 
-    await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-      key: error.bookingId,
-      value: {
-        bookingId: error.bookingId,
-        eventType: BookingEventTypeEnum.BOOK_FAILED,
-        createdAt: new Date(),
-      },
+    const { id } = await this.bookingRepository.findOne({
+      select: ['id'],
+      where: { jobId: error.jobId },
     });
+
+    await Promise.all([
+      this.bookingRepository.update(id, {
+        status: BookingStatusEnum.FAILED,
+      }),
+      this.kafkaService.emit<BookingKafkaEventDto>(
+        TOPICS.BOOKING_EVENT.CREATED,
+        {
+          key: id,
+          value: {
+            bookingId: id,
+            eventType: BookingEventTypeEnum.BOOK_FAILED,
+            message: error.failedReason,
+            createdAt: new Date(),
+          },
+        },
+      ),
+    ]);
   }
 }

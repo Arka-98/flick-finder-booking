@@ -12,13 +12,15 @@ import { Booking } from '@app/common/entities/booking.entity';
 import { BookingStatusEnum } from '@app/common/enums/booking-status.enum';
 import { BookingEvent } from '@app/common/entities/booking-event.entity';
 import { BookingEventTypeEnum } from '@app/common/enums/booking-event-type.enum';
-import { RedisService } from '@app/common/modules/redis/redis.service';
 import { BookingJobInterface } from '@app/common/interfaces/booking-job.interface';
+import { KafkaService, TOPICS } from '@flick-finder/common';
+import { ShowtimeSeat } from '@app/common/consumers/showtime/entities/showtime-seat.entity';
+import { ShowtimeSeatStatusEnum } from '@app/common/enums/showtime-seat-status.enum';
 
 @Injectable()
 export class BookingService {
   constructor(
-    private readonly redisService: RedisService,
+    private readonly kafkaService: KafkaService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     @InjectRepository(Showtime)
@@ -27,6 +29,8 @@ export class BookingService {
     private readonly bookingRepository: Repository<Booking>,
     @InjectRepository(BookingEvent)
     private readonly bookingEventRepository: Repository<BookingEvent>,
+    @InjectRepository(ShowtimeSeat)
+    private readonly showtimeSeatRepository: Repository<ShowtimeSeat>,
     @InjectQueue(QueueEnum.BOOKING)
     private readonly bookingQueue: Queue<BookingJobInterface>,
   ) {}
@@ -44,12 +48,24 @@ export class BookingService {
       throw new UnprocessableEntityException('User or showtime not found');
     }
 
-    // 1. Verify whether showtimes.showtime + movie duration is greater than current time
     if (
       showtime.showtime.getTime() + showtime.movie.duration * 60 * 60 * 1000 <
       Date.now()
     ) {
       throw new UnprocessableEntityException('Showtime is over');
+    }
+
+    const showtimeSeats = await this.showtimeSeatRepository
+      .createQueryBuilder()
+      .where('showtime_id = :showtimeId', { showtimeId })
+      .andWhere('seat_id IN (:...seatIds)', { seatIds })
+      .andWhere('status = :status', {
+        status: ShowtimeSeatStatusEnum.AVAILABLE,
+      })
+      .getMany();
+
+    if (showtimeSeats.length !== seatIds.length) {
+      throw new UnprocessableEntityException('Some seats are not available');
     }
 
     const booking = await this.bookingRepository
@@ -63,31 +79,26 @@ export class BookingService {
       })
       .returning('*')
       .execute();
-
-    // 2. Lock the seat ids for the specified showtime in showtime_seats table (should be done in a txc, but here or in job queue processor?)
-
-    // 3. Check whether requested seat ids are available in showtime_seats table
-
-    // 4. Update booking entry
-
-    // 5. Add job to booking queue to process payment, reserve seats in showtime_seats table & send notification (no need to wait for result)
-
     const { id } = await this.bookingQueue.add(BookingQueueJobNameEnum.BOOK, {
-      bookingId: booking.raw.id,
+      bookingId: booking.raw[0].id,
       userId,
       showtimeId,
       seatIds,
     });
 
-    await this.bookingRepository.update({ id: booking.raw.id }, { jobId: id });
-    await this.redisService.pushToQueue(QueueEnum.BOOKING, [
-      {
-        bookingId: booking.raw.id,
-        eventType: BookingEventTypeEnum.BOOK_INIT,
+    await this.bookingRepository.update(
+      { id: booking.raw[0].id },
+      { jobId: id },
+    );
+    await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
+      key: booking.raw[0].id,
+      value: {
+        bookingId: booking.raw[0].id,
+        eventType: BookingEventTypeEnum.BOOK_PENDING,
         createdAt: new Date(),
       },
-    ]);
+    });
 
-    return { bookingId: booking.raw.id, jobId: id };
+    return { bookingId: booking.raw[0].id, jobId: id };
   }
 }

@@ -3,8 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
-import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { MicroserviceOptions } from '@nestjs/microservices';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { geKafkaMicroserviceOptions } from '@flick-finder/common';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -21,24 +22,12 @@ async function bootstrap() {
   app.disable('x-powered-by');
   app.enableCors();
   app.connectMicroservice<MicroserviceOptions>(
-    {
-      transport: Transport.KAFKA,
-      options: {
-        client: {
-          clientId: configService.get('KAFKA_CLIENT_ID'),
-          brokers: [configService.get('KAFKA_BROKER')],
-        },
-        consumer: {
-          groupId: configService.get('KAFKA_GROUP_ID'),
-        },
-        subscribe: {
-          fromBeginning: true,
-        },
-      },
-    },
-    {
-      inheritAppConfig: true,
-    },
+    geKafkaMicroserviceOptions(
+      configService.get('KAFKA_BROKER'),
+      configService.get('KAFKA_CLIENT_ID'),
+      configService.get('KAFKA_GROUP_ID'),
+    ),
+    { inheritAppConfig: true },
   );
 
   const document = SwaggerModule.createDocument(app, config, {

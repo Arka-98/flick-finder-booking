@@ -1,4 +1,4 @@
-import { type MigrationInterface, type QueryRunner } from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 import { ShowtimeSeatStatusEnum } from '../enums/showtime-seat-status.enum';
 
 export class CreateShowtimeSeatStatusEnum1749365355409

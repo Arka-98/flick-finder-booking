@@ -5,23 +5,36 @@ import {
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import { ValidationPipe } from '@nestjs/common';
+import { readFileSync } from 'fs';
+import { ConfigService } from '@nestjs/config';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 
 async function bootstrap() {
+  const path = await import('node:path');
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({
       http2: true,
-      // https: {
-      //   key: readFileSync('C:/Users/dasar/Documents/certs/server.key'),
-      //   cert: readFileSync('C:/Users/dasar/Documents/certs/server.cert'),
-      // },
+      https: {
+        key: readFileSync(path.join(process.cwd(), 'server.key')),
+        cert: readFileSync(path.join(process.cwd(), 'server.cert')),
+      },
     }),
   );
+  const configService = app.get(ConfigService);
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
   app.setGlobalPrefix('api/v1');
   app.enableCors();
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.REDIS,
+    options: {
+      host: configService.get('REDIS_HOST'),
+      port: configService.get('REDIS_PORT'),
+    },
+  });
 
-  await app.listen(process.env.port ?? 3000);
+  await app.startAllMicroservices();
+  await app.listen(configService.get('APP_PORT'));
 }
 bootstrap();

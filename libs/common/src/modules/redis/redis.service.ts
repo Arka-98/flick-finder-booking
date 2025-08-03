@@ -20,6 +20,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this._redis;
   }
 
+  get redlock() {
+    return this._redlock;
+  }
+
   public pushToQueue<T>(queueName: string, data: T[]) {
     return this._redis.lpush(
       queueName,
@@ -31,10 +35,42 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this._redis.rpop(queueName).then((data) => JSON.parse(data) as T);
   }
 
-  public async popAllFromQueue<T>(queueName: string) {
+  public async getAllFromQueue<T>(queueName: string) {
+    if ((await this._redis.type(queueName)) !== 'list') {
+      return [];
+    }
+
     const data = await this._redis.lrange(queueName, 0, -1);
 
     return data.map<T>((item) => JSON.parse(item));
+  }
+
+  public async deleteQueue(queueName: string) {
+    return this._redis.del(queueName);
+  }
+
+  public async moveAllToAnotherQueue(fromQueue: string, toQueue: string) {
+    const fromQueueLength = await this._redis.llen(fromQueue);
+
+    if (fromQueueLength > 0) {
+      const pipeline = this._redis.pipeline();
+
+      for (let i = 0; i < fromQueueLength; i++) {
+        pipeline.lmove(fromQueue, toQueue, 'RIGHT', 'LEFT');
+      }
+
+      return pipeline.exec();
+    }
+  }
+
+  public async addEntryToStream<T>(streamName: string, key: string, data: T) {
+    return this._redis.xadd(streamName, '*', key, JSON.stringify(data));
+  }
+
+  public async readAllEntriesFromStream<T>(streamName: string) {
+    const entries = await this._redis.xrange(streamName, '-', '+');
+
+    return entries.map<T>(([, fields]) => JSON.parse(fields[1]));
   }
 
   onModuleInit() {

@@ -12,11 +12,22 @@ export class SeatConsumerService {
   ) {}
 
   createSeat(seat: SeatEventDto) {
-    return this.seatRepository.insert(seat);
+    return this.seatRepository.insert({
+      ...seat,
+      hall: { id: seat.hall },
+      seatType: { id: seat.seatType },
+    });
   }
 
   updateSeat(seatId: string, seatUpdateBody: Omit<SeatEventDto, '_id'>) {
-    return this.seatRepository.update({ id: seatId }, seatUpdateBody);
+    return this.seatRepository.update(
+      { id: seatId },
+      {
+        ...seatUpdateBody,
+        hall: { id: seatUpdateBody.hall },
+        seatType: { id: seatUpdateBody.seatType },
+      },
+    );
   }
 
   deleteSeat(seatId: string) {

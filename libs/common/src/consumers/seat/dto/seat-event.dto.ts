@@ -1,20 +1,17 @@
 import { IdDto } from '@app/common/dto/id.dto';
 import { ISeatEvent } from '@flick-finder/common';
-import { Transform } from 'class-transformer';
-import { IsObject, IsString } from 'class-validator';
+import { IsMongoId, IsString } from 'class-validator';
 
 export class SeatEventDto
   extends IdDto
   implements Omit<ISeatEvent, 'hall' | 'seatType'>
 {
-  @Transform(({ value }) => ({ id: value }))
-  @IsObject()
-  hall: { id: string };
+  @IsMongoId()
+  hall: string;
 
-  @Transform(({ value }) => ({ id: value }))
-  @IsObject()
-  seatType: { id: string };
+  @IsMongoId()
+  seatType: string;
 
   @IsString()
-  rowLabel: string;
+  seatLabel: string;
 }

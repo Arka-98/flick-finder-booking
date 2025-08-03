@@ -12,8 +12,8 @@ export class Seat
   @PrimaryColumn({ type: 'varchar', length: 24 })
   readonly id: string;
 
-  @Column({ type: 'varchar', length: 10, name: 'row_label' })
-  readonly rowLabel: string;
+  @Column({ type: 'varchar', length: 10, name: 'seat_label' })
+  readonly seatLabel: string;
 
   @ManyToOne(() => SeatType, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'seat_type_id' })

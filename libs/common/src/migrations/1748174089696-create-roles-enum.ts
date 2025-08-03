@@ -1,5 +1,5 @@
 import { RolesEnum } from '@flick-finder/common';
-import { type MigrationInterface, type QueryRunner } from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class CreateRolesEnum1748174089696 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {

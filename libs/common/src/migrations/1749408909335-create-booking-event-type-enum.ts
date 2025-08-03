@@ -1,4 +1,4 @@
-import { type MigrationInterface, type QueryRunner } from 'typeorm';
+import { MigrationInterface, QueryRunner } from 'typeorm';
 import { BookingEventTypeEnum } from '../enums/booking-event-type.enum';
 
 export class CreateBookingEventTypeEnum1749408909335
@@ -6,11 +6,11 @@ export class CreateBookingEventTypeEnum1749408909335
 {
   public async up(queryRunner: QueryRunner): Promise<void> {
     return queryRunner.query(`
-        CREATE TYPE flick_finder.booking_event_type_enum AS ENUM (${Object.values(
-          BookingEventTypeEnum,
-        )
-          .map((type) => `'${type}'`)
-          .join(', ')});
+      CREATE TYPE flick_finder.booking_event_type_enum AS ENUM (${Object.values(
+        BookingEventTypeEnum,
+      )
+        .map((type) => `'${type}'`)
+        .join(', ')});
     `);
   }
 

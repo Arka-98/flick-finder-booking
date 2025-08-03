@@ -1,7 +1,7 @@
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ path: '.env.booking' });
 
 const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
