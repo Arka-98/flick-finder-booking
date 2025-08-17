@@ -22,4 +22,13 @@ export class SeatPricing
 
   @Column({ type: 'real' })
   readonly price: number;
+
+  @Column({ type: 'varchar', length: 30 })
+  readonly stripePriceId: string;
+
+  @Column({ type: 'varchar', length: 19 })
+  readonly stripeProductId: string;
+
+  @Column({ type: 'bool', default: false })
+  readonly active: boolean;
 }

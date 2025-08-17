@@ -79,6 +79,16 @@ export class BookingService {
       })
       .returning('*')
       .execute();
+
+    await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
+      key: booking.raw[0].id,
+      value: {
+        bookingId: booking.raw[0].id,
+        eventType: BookingEventTypeEnum.BOOK_PENDING,
+        createdAt: new Date(),
+      },
+    });
+
     const { id } = await this.bookingQueue.add(BookingQueueJobNameEnum.BOOK, {
       bookingId: booking.raw[0].id,
       userId,
@@ -90,14 +100,6 @@ export class BookingService {
       { id: booking.raw[0].id },
       { jobId: id },
     );
-    await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-      key: booking.raw[0].id,
-      value: {
-        bookingId: booking.raw[0].id,
-        eventType: BookingEventTypeEnum.BOOK_PENDING,
-        createdAt: new Date(),
-      },
-    });
 
     return { bookingId: booking.raw[0].id, jobId: id };
   }
