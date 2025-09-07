@@ -27,8 +27,14 @@ export class Booking extends BaseTimestampEntity {
   @Column({ type: 'enum', enum: BookingStatusEnum })
   status: BookingStatusEnum;
 
-  @Column('varchar', { array: true, length: 24, name: 'initial_seat_ids' })
-  initialSeats: string[];
+  /**
+   * A snapshot of the seat IDs at the time of creating / updating the booking.
+   */
+  @Column('varchar', { array: true, length: 24, name: 'seat_ids_snapshot' })
+  seatIdsSnapshot: string[];
+
+  @Column({ type: 'text', name: 'stripe_checkout_session_id', nullable: true })
+  stripeCheckoutSessionId?: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

@@ -3,12 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
-import { MicroserviceOptions } from '@nestjs/microservices';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { geKafkaMicroserviceOptions } from '@flick-finder/common';
+import { LoggerService } from '@flick-finder/common';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+    bufferLogs: true,
+  });
   const configService = app.get(ConfigService);
   const config = new DocumentBuilder()
     .setTitle('Flick Finder Booking Service')
@@ -17,18 +20,26 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
 
+  app.useLogger(app.get(LoggerService));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
   app.setGlobalPrefix('api/v1');
   app.disable('x-powered-by');
   app.enableCors();
-  app.connectMicroservice<MicroserviceOptions>(
-    geKafkaMicroserviceOptions(
-      configService.get('KAFKA_BROKER'),
-      configService.get('KAFKA_CLIENT_ID'),
-      configService.get('KAFKA_GROUP_ID'),
-    ),
-    { inheritAppConfig: true },
-  );
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.KAFKA,
+    options: {
+      client: {
+        clientId: configService.get('KAFKA_CLIENT_ID'),
+        brokers: [configService.get('KAFKA_BROKER')],
+      },
+      consumer: {
+        groupId: configService.get('KAFKA_GROUP_ID'),
+      },
+      subscribe: {
+        fromBeginning: true,
+      },
+    },
+  });
 
   const document = SwaggerModule.createDocument(app, config, {
     deepScanRoutes: true,

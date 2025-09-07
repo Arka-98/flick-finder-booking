@@ -9,8 +9,10 @@ import { Booking } from '@app/common/entities/booking.entity';
 import { BookingEvent } from '@app/common/entities/booking-event.entity';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueEnum } from '@app/common/enums/queue.enum';
-import { KafkaModule } from '@flick-finder/common';
+import { KafkaModule, StripeModule } from '@flick-finder/common';
 import { ShowtimeSeat } from '@app/common/consumers/showtime/entities/showtime-seat.entity';
+import { Seat } from '@app/common/consumers/seat/entities/seat.entity';
+import { SeatPricing } from '@app/common/consumers/seat-pricing/entities/seat-pricing.entity';
 
 @Module({
   imports: [
@@ -20,10 +22,13 @@ import { ShowtimeSeat } from '@app/common/consumers/showtime/entities/showtime-s
       Showtime,
       BookingEvent,
       ShowtimeSeat,
+      Seat,
+      SeatPricing,
     ]),
     BullModule.registerQueue({ name: QueueEnum.BOOKING }),
     QueueModule,
     KafkaModule,
+    StripeModule,
   ],
   controllers: [BookingController],
   providers: [BookingService],

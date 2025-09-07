@@ -10,6 +10,7 @@ export class CreateBookingEventsTable1749409347759
         booking_id UUID NOT NULL,
         event_type flick_finder.booking_event_type_enum NOT NULL,
         message TEXT,
+        metadata JSON,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         CONSTRAINT booking_events_booking_id_fk FOREIGN KEY (booking_id) REFERENCES flick_finder.bookings(id) ON DELETE CASCADE

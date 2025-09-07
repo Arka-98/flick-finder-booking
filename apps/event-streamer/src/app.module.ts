@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { StreamerModule } from './streamer/streamer.module';
 import { EventsEmitterModule } from './events-emitter/events-emitter.module';
 import { EventsModule } from './events/events.module';
+import { CommonModule } from '@flick-finder/common';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
   imports: [
@@ -10,11 +11,10 @@ import { EventsModule } from './events/events.module';
       isGlobal: true,
       envFilePath: '.env.event-streamer',
     }),
+    CommonModule.register(),
     StreamerModule,
     EventsModule,
     EventsEmitterModule,
   ],
-  controllers: [],
-  providers: [],
 })
 export class AppModule {}

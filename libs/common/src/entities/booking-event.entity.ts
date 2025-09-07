@@ -23,4 +23,7 @@ export class BookingEvent extends BaseTimestampEntity {
 
   @Column({ type: 'text', nullable: true })
   readonly message?: string;
+
+  @Column({ type: 'json', nullable: true })
+  readonly metadata?: Record<string, any>;
 }

@@ -1,8 +1,19 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Post,
+  RawBodyRequest,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Public } from '@flick-finder/common';
+import { CustomRequest, Public } from '@flick-finder/common';
+import { Request, Response } from 'express';
 
 @ApiBearerAuth()
 @Controller('bookings')
@@ -10,10 +21,31 @@ import { Public } from '@flick-finder/common';
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
 
-  @Public()
-  @HttpCode(HttpStatus.CREATED)
+  @HttpCode(HttpStatus.SEE_OTHER)
   @Post()
-  create(@Body() createBookingDto: CreateBookingDto) {
-    return this.bookingService.create(createBookingDto);
+  async create(
+    @Body() createBookingDto: CreateBookingDto,
+    @Req() request: CustomRequest,
+    @Res() res: Response,
+  ) {
+    const { redirectUrl } = await this.bookingService.create(
+      createBookingDto,
+      request.user.sub,
+    );
+
+    res.redirect(HttpStatus.SEE_OTHER, redirectUrl);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Public()
+  @Post('stripe-webhook')
+  handleStripeWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers() headers: Record<string, string>,
+  ) {
+    return this.bookingService.handleStripeWebhook(
+      req.rawBody,
+      headers['stripe-signature'],
+    );
   }
 }
