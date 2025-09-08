@@ -300,7 +300,7 @@ export class BookingService {
           bookingId: bookingRecord.id,
           eventType: BookingEventTypeEnum.BOOK_FAILED,
           message: 'Payment was not successful',
-          createdAt: new Date(session.created * 1000),
+          createdAt: new Date(),
         },
       });
 
@@ -340,7 +340,7 @@ export class BookingService {
         value: {
           bookingId: bookingRecord.id,
           eventType: BookingEventTypeEnum.BOOK_SUCCESS,
-          createdAt: new Date(session.created * 1000),
+          createdAt: new Date(),
         },
       });
 
