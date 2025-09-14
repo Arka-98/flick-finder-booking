@@ -4,21 +4,27 @@ import { BookingQueueJobNameEnum } from '@app/common/enums/booking-queue-job-nam
 import { QueueEnum } from '@app/common/enums/queue.enum';
 import { BookingJobInterface } from '@app/common/interfaces/booking-job.interface';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { UnprocessableEntityException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { Logger } from '@nestjs/common';
+import { DataSource, Repository } from 'typeorm';
 import { Job } from 'bullmq';
 import { Booking } from '@app/common/entities/booking.entity';
 import { BookingStatusEnum } from '@app/common/enums/booking-status.enum';
-import { KafkaService, TOPICS } from '@flick-finder/common';
+import { KafkaService, StripeService, TOPICS } from '@flick-finder/common';
 import { SeatReservation } from '@apps/booking/src/seat-reservation/entities/seat-reservation.entity';
-import { setTimeout } from 'timers/promises';
 import { ShowtimeSeatStatusEnum } from '@app/common/enums/showtime-seat-status.enum';
+import { InjectRepository } from '@nestjs/typeorm';
+import Stripe from 'stripe';
 
 @Processor(QueueEnum.BOOKING, { concurrency: 100 })
 export class BookingProcessorService extends WorkerHost {
+  private readonly loggerService = new Logger(BookingProcessorService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly kafkaService: KafkaService,
+    private readonly stripeService: StripeService,
+    @InjectRepository(Booking)
+    private readonly bookingRepository: Repository<Booking>,
   ) {
     super();
   }
@@ -26,97 +32,143 @@ export class BookingProcessorService extends WorkerHost {
   public async process(
     job: Job<BookingJobInterface, void, BookingQueueJobNameEnum>,
   ) {
-    switch (job.name) {
-      case BookingQueueJobNameEnum.BOOK: {
-        const { bookingId, showtimeId, seatIds } = job.data;
+    const { stripeEvent } = job.data;
 
-        await this.reserveSeatsForShowtime(bookingId, showtimeId, seatIds);
+    switch (stripeEvent.type) {
+      case 'payment_intent.created':
+      case 'payment_intent.processing':
+      case 'payment_intent.payment_failed':
+      case 'payment_intent.succeeded': {
+        const bookingId = stripeEvent.data.object.metadata.bookingId;
+
+        await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
+          key: bookingId,
+          value: {
+            bookingId,
+            eventType: this.getPaymentEventTypeFromStripeEvent(
+              stripeEvent.type,
+            ),
+            createdAt: new Date(stripeEvent.data.object.created * 1000),
+          },
+        });
 
         break;
+      }
+
+      case 'checkout.session.completed':
+      case 'checkout.session.expired':
+      case 'checkout.session.async_payment_succeeded': {
+        await this.fulfillBookingCheckout(stripeEvent.data.object.id);
+
+        break;
+      }
+
+      default: {
+        this.loggerService.warn(
+          `Unhandled Stripe event type: ${stripeEvent.type}`,
+        );
       }
     }
   }
 
-  private async reserveSeatsForShowtime(
-    bookingId: string,
-    showtimeId: string,
-    seatIds: string[],
-  ) {
+  private async fulfillBookingCheckout(sessionId: string) {
+    const session = await this.stripeService.retrieveCheckoutSession(sessionId);
+    const bookingRecord: Pick<Booking, 'id' | 'seatIdsSnapshot'> =
+      await this.bookingRepository.findOne({
+        select: ['id', 'seatIdsSnapshot'],
+        where: { id: session.metadata.bookingId },
+      });
+
     const queryRunner = this.dataSource.createQueryRunner();
+    const paymentFailed = session.payment_status === 'unpaid';
 
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const showtimeSeats = await queryRunner.manager
-        .getRepository(ShowtimeSeat)
-        .createQueryBuilder()
-        .where('showtime_id = :showtimeId', { showtimeId })
-        .andWhere('seat_id IN (:...seatIds)', { seatIds })
-        .andWhere('status = :status', {
-          status: ShowtimeSeatStatusEnum.AVAILABLE,
-        })
-        .setLock('pessimistic_write')
-        .setOnLocked('skip_locked')
-        .getMany();
-
-      if (showtimeSeats.length !== seatIds.length) {
-        throw new UnprocessableEntityException(
-          'Requested seat IDs are not available',
+      if (!paymentFailed) {
+        await queryRunner.manager.insert(
+          SeatReservation,
+          bookingRecord.seatIdsSnapshot.map((seatId) => ({
+            booking: { id: bookingRecord.id },
+            seat: { id: seatId },
+          })),
         );
       }
 
-      await Promise.all(
-        showtimeSeats.map(({ id }) =>
-          queryRunner.manager.update(
-            ShowtimeSeat,
-            { id },
-            { status: ShowtimeSeatStatusEnum.PENDING },
-          ),
-        ),
-      );
-
-      // @todo process payment
-
-      // simulate payment processing
-      await setTimeout(20000);
-
       await Promise.all([
-        queryRunner.manager.insert(
-          SeatReservation,
-          seatIds.map((seatId) => ({
-            booking: { id: bookingId },
-            seat: { id: seatId },
-          })),
-        ),
         queryRunner.manager.update(
           Booking,
-          { id: bookingId },
-          { status: BookingStatusEnum.COMPLETED },
+          { id: bookingRecord.id },
+          {
+            status: paymentFailed
+              ? BookingStatusEnum.FAILED
+              : BookingStatusEnum.COMPLETED,
+            stripeCheckoutSessionId: session.id,
+          },
         ),
-        ...showtimeSeats.map(({ id }) =>
-          queryRunner.manager.update(
-            ShowtimeSeat,
-            { id },
-            { status: ShowtimeSeatStatusEnum.BOOKED },
+        queryRunner.manager
+          .getRepository(ShowtimeSeat)
+          .createQueryBuilder()
+          .update()
+          .set({
+            status: paymentFailed
+              ? ShowtimeSeatStatusEnum.AVAILABLE
+              : ShowtimeSeatStatusEnum.BOOKED,
+          })
+          .where('seat_id IN (:...seatIds)', {
+            seatIds: bookingRecord.seatIdsSnapshot,
+          })
+          .execute()
+          .then(() =>
+            this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
+              key: bookingRecord.id,
+              value: {
+                bookingId: bookingRecord.id,
+                eventType: paymentFailed
+                  ? BookingEventTypeEnum.SEAT_RESERVATION_FAILED
+                  : BookingEventTypeEnum.SEAT_RESERVATION_SUCCESS,
+                ...(paymentFailed && { message: 'Payment was not successful' }),
+                createdAt: new Date(session.created * 1000),
+              },
+            }),
           ),
-        ),
       ]);
-      await queryRunner.commitTransaction();
       await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-        key: bookingId,
+        key: bookingRecord.id,
         value: {
-          bookingId,
-          eventType: BookingEventTypeEnum.BOOK_SUCCESS,
+          bookingId: bookingRecord.id,
+          eventType: paymentFailed
+            ? BookingEventTypeEnum.BOOK_FAILED
+            : BookingEventTypeEnum.BOOK_SUCCESS,
+          ...(paymentFailed && { message: 'Payment was not successful' }),
           createdAt: new Date(),
         },
       });
+
+      await queryRunner.commitTransaction();
     } catch (error) {
       await queryRunner.rollbackTransaction();
 
       throw error;
     } finally {
       await queryRunner.release();
+    }
+  }
+
+  private getPaymentEventTypeFromStripeEvent(event: Stripe.Event.Type) {
+    switch (event) {
+      case 'payment_intent.created':
+        return BookingEventTypeEnum.PAYMENT_INIT;
+
+      case 'payment_intent.processing':
+        return BookingEventTypeEnum.PAYMENT_PROCESSING;
+
+      case 'payment_intent.payment_failed':
+        return BookingEventTypeEnum.PAYMENT_FAILED;
+
+      case 'payment_intent.succeeded':
+        return BookingEventTypeEnum.PAYMENT_SUCCESS;
     }
   }
 }

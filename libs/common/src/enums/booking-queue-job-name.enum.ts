@@ -1,3 +1,3 @@
 export enum BookingQueueJobNameEnum {
-  BOOK = 'book',
+  STRIPE_EVENT = 'stripe-event',
 }

@@ -1,6 +1,5 @@
+import Stripe from 'stripe';
+
 export interface BookingJobInterface {
-  userId: string;
-  bookingId: string;
-  showtimeId: string;
-  seatIds: string[];
+  stripeEvent: Stripe.Event;
 }

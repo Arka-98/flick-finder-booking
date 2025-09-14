@@ -1,20 +1,33 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import Redlock, { ResourceLockedError } from 'redlock';
 
 @Injectable()
-export class RedisService implements OnModuleInit, OnModuleDestroy {
+export class RedisService implements OnModuleDestroy {
   private _redis: Redis;
   private _redlock: Redlock;
   private readonly loggerService = new Logger(RedisService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) {
+    this._redis = new Redis(this.configService.get('REDIS_URL'));
+    this._redlock = new Redlock([this._redis], {
+      retryCount: 3,
+      retryDelay: 200,
+      retryJitter: 100,
+    });
+
+    this._redis.on('error', (error) => {
+      this.loggerService.error(error.message || error);
+    });
+    this._redlock.on('error', (error) => {
+      if (error instanceof ResourceLockedError) {
+        return;
+      }
+
+      this.loggerService.error(error.message || error);
+    });
+  }
 
   get instance() {
     return this._redis;
@@ -71,26 +84,6 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     const entries = await this._redis.xrange(streamName, '-', '+');
 
     return entries.map<T>(([, fields]) => JSON.parse(fields[1]));
-  }
-
-  onModuleInit() {
-    this._redis = new Redis(this.configService.get('REDIS_URL'));
-    this._redlock = new Redlock([this._redis], {
-      retryCount: 3,
-      retryDelay: 200,
-      retryJitter: 100,
-    });
-
-    this._redis.on('error', (error) => {
-      this.loggerService.error(error.message || error);
-    });
-    this._redlock.on('error', (error) => {
-      if (error instanceof ResourceLockedError) {
-        return;
-      }
-
-      this.loggerService.error(error.message || error);
-    });
   }
 
   onModuleDestroy() {

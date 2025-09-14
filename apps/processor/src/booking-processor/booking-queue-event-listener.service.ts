@@ -33,7 +33,7 @@ export class BookingQueueEventListenerService extends QueueEventsHost {
     jobId: string;
     prev?: string;
   }) {
-    this.loggerService.error(error.failedReason);
+    this.loggerService.warn(error.failedReason);
 
     const { id } = await this.bookingRepository.findOne({
       select: ['id'],

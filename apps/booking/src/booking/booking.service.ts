@@ -6,7 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, QueryRunner, Repository } from 'typeorm';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { User } from '@app/common/consumers/user/entities/user.entity';
 import { Showtime } from '@app/common/consumers/showtime/entities/showtime.entity';
@@ -20,6 +20,11 @@ import { Seat } from '@app/common/consumers/seat/entities/seat.entity';
 import { SeatPricing } from '@app/common/consumers/seat-pricing/entities/seat-pricing.entity';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
+import { InjectQueue } from '@nestjs/bullmq';
+import { QueueEnum } from '@app/common/enums/queue.enum';
+import { Queue } from 'bullmq';
+import { BookingQueueJobNameEnum } from '@app/common/enums/booking-queue-job-name.enum';
+import { StripeEventLog } from '@app/common/entities/stripe-event-log.entity';
 
 /**
  * Service responsible for handling booking operations, including creating bookings,
@@ -51,6 +56,8 @@ export class BookingService {
     private readonly seatRepository: Repository<Seat>,
     @InjectRepository(SeatPricing)
     private readonly seatPricingRepository: Repository<SeatPricing>,
+    @InjectQueue(QueueEnum.BOOKING)
+    private readonly bookingQueue: Queue,
   ) {}
 
   async create({ showtimeId, seatIds }: CreateBookingDto, userId: string) {
@@ -128,10 +135,9 @@ export class BookingService {
     return { redirectUrl: session.url };
   }
 
-  /**
-   * @todo Handle this in bullmq worker
-   */
   async handleStripeWebhook(payload: Buffer, stripeSignature: string) {
+    let queryRunner: QueryRunner;
+
     try {
       const event = await this.stripeService.verifyAndConstructEvent(
         payload,
@@ -139,38 +145,28 @@ export class BookingService {
         this.configService.get('STRIPE_WEBHOOK_SECRET'),
       );
 
-      switch (event.type) {
-        case 'payment_intent.created':
-        case 'payment_intent.processing':
-        case 'payment_intent.payment_failed':
-        case 'payment_intent.succeeded': {
-          const bookingId = event.data.object.metadata.bookingId;
+      this.loggerService.debug(
+        `Received Stripe event ${event.type} with ID: ${event.id}`,
+      );
 
-          await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-            key: bookingId,
-            value: {
-              bookingId,
-              eventType: this.getPaymentEventTypeFromStripeEvent(event.type),
-              createdAt: new Date(event.data.object.created * 1000),
-            },
-          });
+      queryRunner = this.dataSource.createQueryRunner();
 
-          break;
-        }
-
-        case 'checkout.session.completed':
-        case 'checkout.session.expired':
-        case 'checkout.session.async_payment_succeeded': {
-          await this.fulfillBookingCheckout(event.data.object.id);
-
-          break;
-        }
-
-        default: {
-          this.loggerService.warn(`Unhandled Stripe event type: ${event.type}`);
-        }
-      }
+      /**
+       * Log the received stripe event in postgres in a transaction
+       * to ensure idempotency when processing the event in the queue later
+       */
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      await queryRunner.manager.insert(StripeEventLog, {
+        stripeEventId: event.id,
+        stripeEventType: event.type,
+        stripeObjectId: event.data.object['id'],
+      });
+      await queryRunner.commitTransaction();
+      await this.bookingQueue.add(BookingQueueJobNameEnum.STRIPE_EVENT, event);
     } catch (error) {
+      await queryRunner?.rollbackTransaction();
+
       this.loggerService.warn(
         `Error handling Stripe webhook event - ${error.raw || error.message}`,
       );
@@ -180,6 +176,8 @@ export class BookingService {
           `Invalid Stripe webhook signature. Error: ${error.message}`,
         );
       }
+    } finally {
+      queryRunner?.release();
     }
   }
 
@@ -212,15 +210,13 @@ export class BookingService {
         );
       }
 
-      await Promise.all(
-        showtimeSeats.map(({ id }) =>
-          queryRunner.manager.update(
-            ShowtimeSeat,
-            { id },
-            { status: ShowtimeSeatStatusEnum.PENDING },
-          ),
-        ),
-      );
+      await queryRunner.manager
+        .getRepository(ShowtimeSeat)
+        .createQueryBuilder()
+        .update()
+        .set({ status: ShowtimeSeatStatusEnum.PENDING })
+        .where('id IN (:...ids)', { ids: showtimeSeats.map(({ id }) => id) })
+        .execute();
       await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
         key: booking.id,
         value: {
@@ -229,7 +225,6 @@ export class BookingService {
           createdAt: new Date(),
         },
       });
-
       await queryRunner.commitTransaction();
       await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
         key: booking.id,
@@ -256,111 +251,6 @@ export class BookingService {
       );
     } finally {
       await queryRunner.release();
-    }
-  }
-
-  private async fulfillBookingCheckout(sessionId: string) {
-    const session = await this.stripeService.retrieveCheckoutSession(sessionId);
-    const bookingRecord = await this.bookingRepository.findOne({
-      where: { id: session.metadata.bookingId },
-    });
-
-    if (session.payment_status === 'unpaid') {
-      await Promise.all([
-        this.bookingRepository.update(
-          { id: bookingRecord.id },
-          {
-            status: BookingStatusEnum.FAILED,
-            stripeCheckoutSessionId: session.id,
-          },
-        ),
-        this.showtimeSeatRepository
-          .createQueryBuilder()
-          .update()
-          .set({ status: ShowtimeSeatStatusEnum.AVAILABLE })
-          .where('seat_id IN (:...seatIds)', {
-            seatIds: bookingRecord.seatIdsSnapshot,
-          })
-          .execute()
-          .then(() =>
-            this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-              key: bookingRecord.id,
-              value: {
-                bookingId: bookingRecord.id,
-                eventType: BookingEventTypeEnum.SEAT_RESERVATION_FAILED,
-                message: 'Payment was not successful',
-                createdAt: new Date(session.created * 1000),
-              },
-            }),
-          ),
-      ]);
-      await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-        key: bookingRecord.id,
-        value: {
-          bookingId: bookingRecord.id,
-          eventType: BookingEventTypeEnum.BOOK_FAILED,
-          message: 'Payment was not successful',
-          createdAt: new Date(),
-        },
-      });
-
-      return;
-    }
-
-    if (session.payment_status === 'paid') {
-      await Promise.all([
-        this.bookingRepository.update(
-          { id: bookingRecord.id },
-          {
-            status: BookingStatusEnum.COMPLETED,
-            stripeCheckoutSessionId: session.id,
-          },
-        ),
-        this.showtimeSeatRepository
-          .createQueryBuilder()
-          .update()
-          .set({ status: ShowtimeSeatStatusEnum.BOOKED })
-          .where('seat_id IN (:...seatIds)', {
-            seatIds: bookingRecord.seatIdsSnapshot,
-          })
-          .execute()
-          .then(() =>
-            this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-              key: bookingRecord.id,
-              value: {
-                bookingId: bookingRecord.id,
-                eventType: BookingEventTypeEnum.SEAT_RESERVATION_SUCCESS,
-                createdAt: new Date(session.created * 1000),
-              },
-            }),
-          ),
-      ]);
-      await this.kafkaService.emit(TOPICS.BOOKING_EVENT.CREATED, {
-        key: bookingRecord.id,
-        value: {
-          bookingId: bookingRecord.id,
-          eventType: BookingEventTypeEnum.BOOK_SUCCESS,
-          createdAt: new Date(),
-        },
-      });
-
-      return;
-    }
-  }
-
-  private getPaymentEventTypeFromStripeEvent(event: Stripe.Event.Type) {
-    switch (event) {
-      case 'payment_intent.created':
-        return BookingEventTypeEnum.PAYMENT_INIT;
-
-      case 'payment_intent.processing':
-        return BookingEventTypeEnum.PAYMENT_PROCESSING;
-
-      case 'payment_intent.payment_failed':
-        return BookingEventTypeEnum.PAYMENT_FAILED;
-
-      case 'payment_intent.succeeded':
-        return BookingEventTypeEnum.PAYMENT_SUCCESS;
     }
   }
 }
